@@ -1,0 +1,19 @@
+{
+    "Comment": "A basic example Step Function for testing.",
+    "StartAt": "FirstState",
+    "States": {
+        "FirstState": {
+            "Type": "Pass",
+            "Result": "First State Executed",
+            "Next": "Wait"
+        },
+        "Wait": {
+            "Type": "Wait",
+            "Seconds": 60,
+            "Next": "NextState"
+        },
+        "NextState": {
+            "Type": "Succeed"
+        }
+    }
+}

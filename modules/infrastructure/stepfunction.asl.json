@@ -1,0 +1,144 @@
+{
+    "Comment": "A state machine that deploys a Step Functions state machine version incrementally using a weighted alias",
+    "StartAt": "ExecutionContext",
+    "States": {
+        "ExecutionContext": {
+            "Type": "Pass",
+            "Next": "ConfigureRollout",
+            "Parameters": {
+                "execution_arn.$": "$$.Execution.Id"
+            },
+            "ResultPath": "$.context"
+        },
+        "ConfigureRollout": {
+            "Type": "Task",
+            "Resource": "${configure_rollout_arn}",
+            "ResultPath": "$.config",
+            "Next": "CheckConfigureRollout"
+        },
+        "CheckConfigureRollout": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.config.status",
+                    "StringEquals": "error",
+                    "Next": "ConfigurationFailed"
+                }
+            ],
+            "Default": "Parallel"
+        },
+        "ConfigurationFailed": {
+            "Type": "Fail",
+            "Error": "ConfigureRolloutFailed",
+            "Cause": "Configure rollout lambda returned an error"
+        },
+        "Parallel": {
+            "Type": "Parallel",
+            "Branches": [
+                {
+                    "StartAt": "WaitInterval",
+                    "States": {
+                        "WaitInterval": {
+                            "Type": "Wait",
+                            "SecondsPath": "$.interval",
+                            "Next": "UpdateWeight"
+                        },
+                        "UpdateWeight": {
+                            "Type": "Task",
+                            "Resource": "${update_weight_arn}",
+                            "ResultPath": "$.config",
+                            "Next": "CheckUpdateWeight"
+                        },
+                        "CheckUpdateWeight": {
+                            "Type": "Choice",
+                            "Choices": [
+                                {
+                                    "Variable": "$.config.status",
+                                    "StringEquals": "error",
+                                    "Next": "UpdateWeightFailed"
+                                }
+                            ],
+                            "Default": "IsFullyWeighted"
+                        },
+                        "UpdateWeightFailed": {
+                            "Type": "Fail",
+                            "Error": "UpdateWeightFailed",
+                            "Cause": "Update weight lambda returned an error"
+                        },
+                        "IsFullyWeighted": {
+                            "Type": "Choice",
+                            "Choices": [
+                                {
+                                    "Variable": "$.config.next_weight",
+                                    "NumericEquals": 100,
+                                    "Next": "Success"
+                                }
+                            ],
+                            "Default": "WaitInterval"
+                        },
+                        "Success": {
+                            "Type": "Succeed"
+                        }
+                    }
+                },
+                {
+                    "StartAt": "WaitMetricCheck",
+                    "States": {
+                        "WaitMetricCheck": {
+                            "Type": "Wait",
+                            "SecondsPath": "$.healthcheck_interval",
+                            "Next": "HealthCheck"
+                        },
+                        "HealthCheck": {
+                            "Type": "Task",
+                            "Resource": "${health_check_arn}",
+                            "InputPath": "$",
+                            "ResultPath": "$.status",
+                            "Next": "VerifyHealthCheck"
+                        },
+                        "VerifyHealthCheck": {
+                            "Type": "Choice",
+                            "Choices": [
+                                {
+                                    "Variable": "$.status.status",
+                                    "StringEquals": "error",
+                                    "Next": "HealthCheckError"
+                                },
+                                {
+                                    "Variable": "$.status.result",
+                                    "StringEquals": "FAILED",
+                                    "Next": "RolloutFailed"
+                                },
+                                {
+                                    "Variable": "$.status.result",
+                                    "StringEquals": "SUCCEEDED",
+                                    "Next": "WaitMetricCheck"
+                                },
+                                {
+                                    "Variable": "$.status.result",
+                                    "StringEquals": "COMPLETED",
+                                    "Next": "RolloutSuccess"
+                                }
+                            ],
+                            "Default": "HealthCheckError"
+                        },
+                        "HealthCheckError": {
+                            "Type": "Fail",
+                            "Error": "HealthCheckError",
+                            "Cause": "Health check lambda returned an error"
+                        },
+                        "RolloutFailed": {
+                            "Type": "Fail",
+                            "Error": "HealthCheckFailed",
+                            "Cause": "Health check detected rollout failure"
+                        },
+                        "RolloutSuccess": {
+                            "Type": "Succeed"
+                        }
+                    }
+                }
+            ],
+            "End": true
+        }
+    }
+}
